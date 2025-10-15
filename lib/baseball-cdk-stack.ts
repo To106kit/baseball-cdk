@@ -8,19 +8,9 @@ export class BaseballCdkStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
     super(scope, id, props);
 
-    // VPC作成
-    const vpc = new ec2.Vpc(this, 'BaseballVPC', {
-      maxAzs: 2,
-      subnetConfiguration: [
-        {
-          name: 'Public',
-          subnetType: ec2.SubnetType.PUBLIC,
-        },
-        {
-          name: 'Isolated',
-          subnetType: ec2.SubnetType.PRIVATE_ISOLATED,
-        },
-      ],
+    // デフォルトVPCを使用（Phase1と同じ）
+    const vpc = ec2.Vpc.fromLookup(this, 'DefaultVPC', {
+      isDefault: true,
     });
 
     // EC2セキュリティグループ
@@ -76,32 +66,40 @@ export class BaseballCdkStack extends cdk.Stack {
       removalPolicy: cdk.RemovalPolicy.DESTROY,
     });
 
-    // UserData作成
+    // UserData作成（Phase2-2の成功版 + Metabase）
     const userData = ec2.UserData.forLinux();
     userData.addCommands(
       'set -e',
       'yum update -y',
-      'systemctl start sshd',
-      'systemctl enable sshd',
+      
+      // Docker インストール
+      'yum install -y docker',
+      'systemctl start docker',
+      'systemctl enable docker',
+      'usermod -a -G docker ec2-user',
+      
+      // Metabase起動
+      'docker run -d --name metabase -p 3000:3000 --restart unless-stopped metabase/metabase',
+      
       'echo "UserData completed successfully" > /tmp/userdata-complete.txt',
     );
 
     // IAMロール作成
-    const role = new iam.Role(this, 'EC2Role', {
+    const role = new iam.Role(this, 'EC2Role', { 
       assumedBy: new iam.ServicePrincipal('ec2.amazonaws.com'),
       managedPolicies: [
         iam.ManagedPolicy.fromAwsManagedPolicyName('AmazonSSMManagedInstanceCore'),
       ],
     });
 
-    // EC2インスタンス
+    // EC2インスタンス（Phase1と同じt2.micro）
     const instance = new ec2.Instance(this, 'BaseballEC2', {
       vpc,
       vpcSubnets: {
         subnetType: ec2.SubnetType.PUBLIC,
       },
       instanceType: ec2.InstanceType.of(
-        ec2.InstanceClass.T3,
+        ec2.InstanceClass.T2,  // T3 → T2に変更
         ec2.InstanceSize.MICRO,
       ),
       machineImage: ec2.MachineImage.latestAmazonLinux2023(),
