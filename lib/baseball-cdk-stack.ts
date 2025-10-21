@@ -3,12 +3,18 @@ import { Construct } from 'constructs';
 import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import * as rds from 'aws-cdk-lib/aws-rds';
 import * as iam from 'aws-cdk-lib/aws-iam';
+import * as lambda from 'aws-cdk-lib/aws-lambda';
+import * as ecr from 'aws-cdk-lib/aws-ecr';
+import * as events from 'aws-cdk-lib/aws-events';
+import * as targets from 'aws-cdk-lib/aws-events-targets';
 
 export class BaseballCdkStack extends cdk.Stack {
+  public readonly database: rds.DatabaseInstance;
+
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
     super(scope, id, props);
 
-    // デフォルトVPCを使用（Phase1と同じ）
+    // デフォルトVPCを使用
     const vpc = ec2.Vpc.fromLookup(this, 'DefaultVPC', {
       isDefault: true,
     });
@@ -66,21 +72,13 @@ export class BaseballCdkStack extends cdk.Stack {
       removalPolicy: cdk.RemovalPolicy.DESTROY,
     });
 
-    // UserData作成（Phase2-2の成功版 + Metabase）
+    this.database = database;
+
+    // UserData作成（軽量化版）
     const userData = ec2.UserData.forLinux();
     userData.addCommands(
       'set -e',
       'yum update -y',
-      
-      // Docker インストール
-      'yum install -y docker',
-      'systemctl start docker',
-      'systemctl enable docker',
-      'usermod -a -G docker ec2-user',
-      
-      // Metabase起動
-      'docker run -d --name metabase -p 3000:3000 --restart unless-stopped metabase/metabase',
-      
       'echo "UserData completed successfully" > /tmp/userdata-complete.txt',
     );
 
@@ -92,15 +90,15 @@ export class BaseballCdkStack extends cdk.Stack {
       ],
     });
 
-    // EC2インスタンス（Phase1と同じt2.micro）
+    // EC2インスタンス
     const instance = new ec2.Instance(this, 'BaseballEC2', {
       vpc,
       vpcSubnets: {
         subnetType: ec2.SubnetType.PUBLIC,
       },
       instanceType: ec2.InstanceType.of(
-        ec2.InstanceClass.T2,  // T3 → T2に変更
-        ec2.InstanceSize.MICRO,
+        ec2.InstanceClass.T3,
+        ec2.InstanceSize.MICRO
       ),
       machineImage: ec2.MachineImage.latestAmazonLinux2023(),
       securityGroup: ec2SecurityGroup,
@@ -113,6 +111,74 @@ export class BaseballCdkStack extends cdk.Stack {
     const eip = new ec2.CfnEIP(this, 'EC2EIP', {
       domain: 'vpc',
       instanceId: instance.instanceId,
+    });
+
+    // ========================================
+    // Lambda関数を追加（Container Image版）
+    // ========================================
+
+    // Lambda用セキュリティグループ
+    const lambdaSecurityGroup = new ec2.SecurityGroup(this, 'LambdaSecurityGroup', {
+      vpc,
+      description: 'Security group for Baseball Lambda',
+      allowAllOutbound: true,
+    });
+
+    // LambdaからRDSへのアクセスを許可
+    rdsSecurityGroup.addIngressRule(
+      lambdaSecurityGroup,
+      ec2.Port.tcp(5432),
+      'Allow from Lambda'
+    );
+
+    // Lambda関数作成（Container Image版）
+    const dataFetchFunction = new lambda.DockerImageFunction(this, 'DataFetchFunctionV2', {
+      code: lambda.DockerImageCode.fromEcr(
+        ecr.Repository.fromRepositoryName(this, 'BaseballLambdaRepo', 'baseball-lambda'),
+        { tagOrDigest: 'sha256:f36f21165a3013b45da32f0942de16fb6b728fa1108a3ea8653f1216c2336182' }
+      ),
+      timeout: cdk.Duration.minutes(15),
+      memorySize: 1024,
+      vpc: vpc,
+      vpcSubnets: {
+        subnetType: ec2.SubnetType.PUBLIC,
+      },
+      allowPublicSubnet: true,
+      securityGroups: [lambdaSecurityGroup],
+      environment: {
+        DB_HOST: database.dbInstanceEndpointAddress,
+        DB_PORT: database.dbInstanceEndpointPort,
+        DB_NAME: 'postgres',
+        DB_USER: 'postgres',
+        DB_PASSWORD: database.secret?.secretValueFromJson('password').unsafeUnwrap() || '',
+        START_YEAR: '2015',
+        END_YEAR: '2017',
+        PYBASEBALL_CACHE: '/tmp/.pybaseball',
+      },
+    });
+
+    // EventBridge ルール: 毎週日曜 0時 (UTC)
+    const rule = new events.Rule(this, 'WeeklyScheduleRule', {
+      schedule: events.Schedule.cron({
+        weekDay: 'SUN',
+        hour: '0',
+        minute: '0',
+      }),
+      description: 'Run baseball data fetch every Sunday at midnight UTC',
+    });
+
+    // Lambda関数をターゲットに設定
+    rule.addTarget(new targets.LambdaFunction(dataFetchFunction));
+
+    // 出力
+    new cdk.CfnOutput(this, 'LambdaFunctionName', {
+      value: dataFetchFunction.functionName,
+      description: 'Lambda Function Name',
+    });
+
+    new cdk.CfnOutput(this, 'LambdaFunctionArn', {
+      value: dataFetchFunction.functionArn,
+      description: 'Lambda Function ARN',
     });
   }
 }
