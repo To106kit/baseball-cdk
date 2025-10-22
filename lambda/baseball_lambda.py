@@ -22,7 +22,8 @@ def lambda_handler(event, context):
         'port': int(os.environ.get('DB_PORT', 5432)),
         'database': os.environ['DB_NAME'],
         'user': os.environ['DB_USER'],
-        'password': os.environ['DB_PASSWORD']
+        'password': os.environ['DB_PASSWORD'],
+        'sslmode': 'require'  # ← 追加
     }
     
     # 取得する年度範囲

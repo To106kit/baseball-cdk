@@ -124,27 +124,22 @@ export class BaseballCdkStack extends cdk.Stack {
       allowAllOutbound: true,
     });
 
-    // LambdaからRDSへのアクセスを許可
+    // インターネットからRDSへのアクセスを許可（学習目的）
     rdsSecurityGroup.addIngressRule(
-      lambdaSecurityGroup,
+      ec2.Peer.anyIpv4(),
       ec2.Port.tcp(5432),
-      'Allow from Lambda'
+      'Allow from anywhere (for Lambda outside VPC)'
     );
 
-    // Lambda関数作成（Container Image版）
-    const dataFetchFunction = new lambda.DockerImageFunction(this, 'DataFetchFunctionV2', {
+    // Lambda関数作成（Container Image版） - VPC外で実行
+    const dataFetchFunction = new lambda.DockerImageFunction(this, 'DataFetchFunctionV3', {
       code: lambda.DockerImageCode.fromEcr(
         ecr.Repository.fromRepositoryName(this, 'BaseballLambdaRepo', 'baseball-lambda'),
-        { tagOrDigest: 'sha256:f36f21165a3013b45da32f0942de16fb6b728fa1108a3ea8653f1216c2336182' }
+        { tagOrDigest: 'v3' }
       ),
       timeout: cdk.Duration.minutes(15),
       memorySize: 1024,
-      vpc: vpc,
-      vpcSubnets: {
-        subnetType: ec2.SubnetType.PUBLIC,
-      },
-      allowPublicSubnet: true,
-      securityGroups: [lambdaSecurityGroup],
+      // vpc, vpcSubnets, securityGroups を削除 → VPC外に
       environment: {
         DB_HOST: database.dbInstanceEndpointAddress,
         DB_PORT: database.dbInstanceEndpointPort,
