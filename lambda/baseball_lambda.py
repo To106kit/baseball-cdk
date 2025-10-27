@@ -36,11 +36,16 @@ def lambda_handler(event, context):
         all_data = []
         
         for year in range(start_year, end_year + 1):
-            print(f"  Fetching {year} season data...")
-            data = batting_stats(year, qual=100)
-            data['season'] = year
-            all_data.append(data)
-            print(f"  ✓ {year}: {len(data)} players")
+            try:
+                print(f"  Fetching {year} season data...")
+                data = batting_stats(year, qual=100)
+                data['season'] = year
+                all_data.append(data)
+                print(f"  ✓ {year}: {len(data)} players")
+            except Exception as e:
+                print(f"  ✗ {year}: FAILED - {str(e)}")
+                print(f"  → Skipping {year} and continuing...")
+                continue
         
         df = pd.concat(all_data, ignore_index=True)
         print(f"Total records: {len(df)}")
