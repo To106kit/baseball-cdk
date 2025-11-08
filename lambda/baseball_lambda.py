@@ -23,19 +23,26 @@ def lambda_handler(event, context):
         'database': os.environ['DB_NAME'],
         'user': os.environ['DB_USER'],
         'password': os.environ['DB_PASSWORD'],
-        'sslmode': 'require'  # ← 追加
+        'sslmode': 'require'
     }
     
     # 取得する年度範囲
     start_year = int(os.environ.get('START_YEAR', 2015))
     end_year = int(os.environ.get('END_YEAR', 2017))
+    skip_years = [2022]  # pybaseballで取得できない年度
     
     try:
         # データ取得
         print(f"[1] Fetching data from {start_year} to {end_year}...")
         all_data = []
+        failed_years = []
         
         for year in range(start_year, end_year + 1):
+            # スキップ対象の年度チェック
+            if year in skip_years:
+                print(f"  ⊘ {year}: SKIPPED (pybaseball limitation)")
+                failed_years.append(year)
+                continue
             try:
                 print(f"  Fetching {year} season data...")
                 data = batting_stats(year, qual=100)
@@ -45,7 +52,16 @@ def lambda_handler(event, context):
             except Exception as e:
                 print(f"  ✗ {year}: FAILED - {str(e)}")
                 print(f"  → Skipping {year} and continuing...")
+                failed_years.append(year)
                 continue
+        
+        # 失敗した年度をサマリー表示
+        if failed_years:
+            print(f"\n⚠️  Failed to fetch data for years: {failed_years}")
+        
+        # 全年度失敗チェック
+        if not all_data:
+            raise ValueError("No data fetched from any year! All years failed.")
         
         df = pd.concat(all_data, ignore_index=True)
         print(f"Total records: {len(df)}")
@@ -90,6 +106,16 @@ def lambda_handler(event, context):
             INSERT INTO baseball_batting_historical 
             (name, season, games, at_bats, runs, hits, hr, rbi, sb, avg)
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (name, season) 
+            DO UPDATE SET
+                games = EXCLUDED.games,
+                at_bats = EXCLUDED.at_bats,
+                runs = EXCLUDED.runs,
+                hits = EXCLUDED.hits,
+                hr = EXCLUDED.hr,
+                rbi = EXCLUDED.rbi,
+                sb = EXCLUDED.sb,
+                avg = EXCLUDED.avg
             """
             cur.execute(insert_sql, tuple(row))
             insert_count += 1
@@ -110,12 +136,15 @@ def lambda_handler(event, context):
             'body': {
                 'message': 'Success',
                 'records_inserted': insert_count,
-                'years': f"{start_year}-{end_year}"
+                'years': f"{start_year}-{end_year}",
+                'failed_years': failed_years
             }
         }
         
         print("=" * 60)
         print("✓ Import completed successfully!")
+        if failed_years:
+            print(f"⚠️  Note: {len(failed_years)} year(s) failed: {failed_years}")
         print("=" * 60)
         
         return result
