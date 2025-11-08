@@ -6,3 +6,21 @@ node_modules
 # CDK asset staging directory
 .cdk.staging
 cdk.out
+# Lambda関連
+lambda-layer/
+response.json
+
+# CDK
+cdk.out/
+*.js
+*.d.ts
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Docker
+.dockerignore
+.env
+.claude/

@@ -1,0 +1,5 @@
+psycopg2-binary==2.9.9
+pandas==2.1.4
+numpy==1.26.4
+pybaseball==2.2.7
+--only-binary=:all:
