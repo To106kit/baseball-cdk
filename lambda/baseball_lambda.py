@@ -7,15 +7,88 @@ import psycopg2
 import pandas as pd
 from pybaseball import batting_stats
 from datetime import datetime
+import json
+import urllib3
+
+def send_slack_notification(success=True, records=0, years="", failed_years=None, duration=0, error_msg=""):
+    """
+    Slack通知を送信
+    """
+    webhook_url = os.environ.get('SLACK_WEBHOOK_URL')
+    if not webhook_url:
+        print("⚠️  SLACK_WEBHOOK_URL not set, skipping notification")
+        return
+
+    try:
+        http = urllib3.PoolManager()
+
+        if success:
+            # 成功時の通知
+            color = "good"
+            emoji = ":white_check_mark:"
+            title = f"{emoji} Baseball Data Import Completed"
+
+            fields = [
+                {"title": "Status", "value": "Success", "short": True},
+                {"title": "Records", "value": str(records), "short": True},
+                {"title": "Years", "value": years, "short": True},
+                {"title": "Duration", "value": f"{duration}s", "short": True}
+            ]
+
+            if failed_years:
+                fields.append({
+                    "title": "Failed Years",
+                    "value": str(failed_years),
+                    "short": False
+                })
+        else:
+            # エラー時の通知
+            color = "danger"
+            emoji = ":x:"
+            title = f"{emoji} Baseball Data Import Failed"
+
+            fields = [
+                {"title": "Status", "value": "Failed", "short": True},
+                {"title": "Duration", "value": f"{duration}s", "short": True},
+                {"title": "Error", "value": error_msg[:500], "short": False}
+            ]
+
+        slack_message = {
+            "attachments": [{
+                "color": color,
+                "title": title,
+                "fields": fields,
+                "footer": "Baseball Lambda",
+                "ts": int(datetime.now().timestamp())
+            }]
+        }
+
+        response = http.request(
+            'POST',
+            webhook_url,
+            body=json.dumps(slack_message),
+            headers={'Content-Type': 'application/json'}
+        )
+
+        if response.status == 200:
+            print("✓ Slack notification sent successfully")
+        else:
+            print(f"⚠️  Slack notification failed: {response.status}")
+
+    except Exception as e:
+        print(f"⚠️  Failed to send Slack notification: {str(e)}")
 
 def lambda_handler(event, context):
     """
     Lambda関数のエントリーポイント
     """
+    import time
+    start_time = time.time()
+
     print("=" * 60)
     print("Baseball Historical Data Import - Lambda Version")
     print("=" * 60)
-    
+
     # 環境変数から接続情報取得
     db_config = {
         'host': os.environ['DB_HOST'],
@@ -146,13 +219,32 @@ def lambda_handler(event, context):
         if failed_years:
             print(f"⚠️  Note: {len(failed_years)} year(s) failed: {failed_years}")
         print("=" * 60)
-        
+
+        # Slack通知送信
+        duration = round(time.time() - start_time, 2)
+        send_slack_notification(
+            success=True,
+            records=insert_count,
+            years=f"{start_year}-{end_year}",
+            failed_years=failed_years,
+            duration=duration
+        )
+
         return result
         
     except Exception as e:
         print(f"ERROR: {str(e)}")
         import traceback
         traceback.print_exc()
+
+        # エラー時のSlack通知
+        duration = round(time.time() - start_time, 2)
+        send_slack_notification(
+            success=False,
+            duration=duration,
+            error_msg=str(e)
+        )
+
         return {
             'statusCode': 500,
             'body': {

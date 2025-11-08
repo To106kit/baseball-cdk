@@ -86,6 +86,7 @@ export class BaseballCdkStack extends cdk.Stack {
         START_YEAR: '2015',
         END_YEAR: '2025',
         PYBASEBALL_CACHE: '/tmp/.pybaseball',
+        SLACK_WEBHOOK_URL: slackWebhookUrl,
       },
     });
 
