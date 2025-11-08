@@ -1,0 +1,89 @@
+name: Build & Push Lambda Image
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'lambda/**'
+  workflow_dispatch:  # 手動実行も可能
+
+env:
+  AWS_REGION: ap-northeast-1
+  ECR_REPOSITORY: baseball-lambda
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # 全履歴取得（バージョン計算用）
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Get version tag
+        id: version
+        run: |
+          # コミット数からバージョン自動生成 (v8, v9, v10...)
+          BASE_VERSION=7
+          COMMIT_COUNT=$(git rev-list --count HEAD)
+          NEW_VERSION=v$((BASE_VERSION + COMMIT_COUNT))
+          echo "tag=$NEW_VERSION" >> $GITHUB_OUTPUT
+          echo "📦 Building version: $NEW_VERSION"
+
+      - name: Build Docker image
+        working-directory: lambda
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          echo "🔨 Building Docker image..."
+          docker build \
+            --platform linux/amd64 \
+            --provenance=false \
+            --sbom=false \
+            -t $ECR_REPOSITORY:$IMAGE_TAG \
+            -t $ECR_REPOSITORY:latest \
+            .
+
+      - name: Push to Amazon ECR
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          echo "📤 Pushing image to ECR..."
+
+          # バージョンタグ付きイメージをプッシュ
+          docker tag $ECR_REPOSITORY:$IMAGE_TAG $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+
+          # latestタグもプッシュ
+          docker tag $ECR_REPOSITORY:latest $ECR_REGISTRY/$ECR_REPOSITORY:latest
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
+
+          echo "✅ Successfully pushed: $IMAGE_TAG and latest"
+
+      - name: Summary
+        env:
+          IMAGE_TAG: ${{ steps.version.outputs.tag }}
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        run: |
+          echo "## 🎉 Build Complete!" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Image:** \`$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Next Steps:" >> $GITHUB_STEP_SUMMARY
+          echo "1. Update \`lib/baseball-cdk-stack.ts\` to use \`tagOrDigest: '$IMAGE_TAG'\`" >> $GITHUB_STEP_SUMMARY
+          echo "2. Run \`npx cdk deploy\`" >> $GITHUB_STEP_SUMMARY

@@ -249,6 +249,51 @@ instanceType: ec2.InstanceType.of(
 - ECR保存（1イメージ）: ~$0.10
 - **合計**: ~$17/月
 
+## GitHub Actions（CI/CD）
+
+このプロジェクトではGitHub Actionsを使用してDockerイメージの自動ビルド・プッシュを実装しています。
+
+### 自動ビルドワークフロー
+
+**トリガー条件:**
+- `main`ブランチへ`lambda/`配下の変更をpush
+- 手動実行（Actions タブから）
+
+**処理内容:**
+1. Dockerイメージビルド（`--platform linux/amd64`）
+2. バージョンタグ自動生成（コミット数ベース: v8, v9...）
+3. ECRへプッシュ（バージョンタグ + `latest`）
+
+**設定ファイル:** [.github/workflows/build-lambda.yml](.github/workflows/build-lambda.yml)
+
+### セットアップ手順
+
+1. **GitHub Secretsの設定**（リポジトリSettings → Secrets）
+   - `AWS_ACCESS_KEY_ID`
+   - `AWS_SECRET_ACCESS_KEY`
+
+2. **IAM権限**: ECRプッシュ権限が必要
+   ```json
+   {
+     "Action": [
+       "ecr:GetAuthorizationToken",
+       "ecr:BatchCheckLayerAvailability",
+       "ecr:PutImage",
+       "ecr:InitiateLayerUpload",
+       "ecr:UploadLayerPart",
+       "ecr:CompleteLayerUpload"
+     ]
+   }
+   ```
+
+3. **デプロイフロー**
+   ```
+   lambda/変更 → git push → Actions自動実行 → ECRプッシュ
+   → 手動でtagOrDigest更新 → npx cdk deploy
+   ```
+
+詳細は [.github/README.md](.github/README.md) を参照。
+
 ## 今後の改善案
 
 - [ ] RDSをプライベートサブネットに移動（LambdaをVPC内配置）
@@ -257,3 +302,5 @@ instanceType: ec2.InstanceType.of(
 - [ ] Step Functionsによるリトライ処理
 - [ ] インスタンスクラスをt4g（ARM）に変更してコスト削減
 - [ ] RDS Proxyの導入
+- [ ] GitHub ActionsでCDK自動デプロイ（テスト環境）
+- [ ] PR時のCDK差分チェック
