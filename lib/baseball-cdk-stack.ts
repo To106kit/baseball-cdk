@@ -73,7 +73,7 @@ export class BaseballCdkStack extends cdk.Stack {
     const dataFetchFunction = new lambda.DockerImageFunction(this, 'DataFetchFunctionV3', {
       code: lambda.DockerImageCode.fromEcr(
         ecr.Repository.fromRepositoryName(this, 'BaseballLambdaRepo', 'baseball-lambda'),
-        { tagOrDigest: 'v7' }
+        { tagOrDigest: 'v22' }
       ),
       timeout: cdk.Duration.minutes(15),
       memorySize: 3008,
