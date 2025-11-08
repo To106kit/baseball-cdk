@@ -3,14 +3,16 @@ import os
 # 最初に環境変数設定 (import前に実行!)
 os.environ['PYBASEBALL_CACHE'] = '/tmp/.pybaseball'
 
-import psycopg2
+import boto3
 import pandas as pd
 from pybaseball import batting_stats
 from datetime import datetime
 import json
 import urllib3
 
-def send_slack_notification(success=True, records=0, years="", failed_years=None, duration=0, error_msg=""):
+s3_client = boto3.client('s3')
+
+def send_slack_notification(success=True, records=0, years="", failed_years=None, duration=0, error_msg="", s3_path=""):
     """
     Slack通知を送信
     """
@@ -26,13 +28,14 @@ def send_slack_notification(success=True, records=0, years="", failed_years=None
             # 成功時の通知
             color = "good"
             emoji = ":white_check_mark:"
-            title = f"{emoji} Baseball Data Import Completed"
+            title = f"{emoji} Baseball Data Export Completed"
 
             fields = [
                 {"title": "Status", "value": "Success", "short": True},
                 {"title": "Records", "value": str(records), "short": True},
                 {"title": "Years", "value": years, "short": True},
-                {"title": "Duration", "value": f"{duration}s", "short": True}
+                {"title": "Duration", "value": f"{duration}s", "short": True},
+                {"title": "S3 Location", "value": s3_path, "short": False}
             ]
 
             if failed_years:
@@ -45,7 +48,7 @@ def send_slack_notification(success=True, records=0, years="", failed_years=None
             # エラー時の通知
             color = "danger"
             emoji = ":x:"
-            title = f"{emoji} Baseball Data Import Failed"
+            title = f"{emoji} Baseball Data Export Failed"
 
             fields = [
                 {"title": "Status", "value": "Failed", "short": True},
@@ -58,7 +61,7 @@ def send_slack_notification(success=True, records=0, years="", failed_years=None
                 "color": color,
                 "title": title,
                 "fields": fields,
-                "footer": "Baseball Lambda",
+                "footer": "Baseball Lambda (Data Lake)",
                 "ts": int(datetime.now().timestamp())
             }]
         }
@@ -80,142 +83,102 @@ def send_slack_notification(success=True, records=0, years="", failed_years=None
 
 def lambda_handler(event, context):
     """
-    Lambda関数のエントリーポイント
+    Lambda関数のエントリーポイント - S3 Data Lake版
     """
     import time
     start_time = time.time()
 
     print("=" * 60)
-    print("Baseball Historical Data Import - Lambda Version")
+    print("Baseball Historical Data Export to S3 Data Lake")
     print("=" * 60)
 
-    # 環境変数から接続情報取得
-    db_config = {
-        'host': os.environ['DB_HOST'],
-        'port': int(os.environ.get('DB_PORT', 5432)),
-        'database': os.environ['DB_NAME'],
-        'user': os.environ['DB_USER'],
-        'password': os.environ['DB_PASSWORD'],
-        'sslmode': 'require'
-    }
-    
+    # 環境変数取得
+    s3_bucket = os.environ['S3_BUCKET']
+    s3_prefix = os.environ.get('S3_PREFIX', 'batting_stats')
+
     # 取得する年度範囲
     start_year = int(os.environ.get('START_YEAR', 2015))
-    end_year = int(os.environ.get('END_YEAR', 2017))
+    end_year = int(os.environ.get('END_YEAR', 2025))
     skip_years = [2022]  # pybaseballで取得できない年度
-    
+
     try:
-        # データ取得
         print(f"[1] Fetching data from {start_year} to {end_year}...")
-        all_data = []
+        print(f"    S3 Destination: s3://{s3_bucket}/{s3_prefix}/")
+
+        total_records = 0
         failed_years = []
-        
+        exported_files = []
+
         for year in range(start_year, end_year + 1):
             # スキップ対象の年度チェック
             if year in skip_years:
                 print(f"  ⊘ {year}: SKIPPED (pybaseball limitation)")
                 failed_years.append(year)
                 continue
+
             try:
                 print(f"  Fetching {year} season data...")
                 data = batting_stats(year, qual=100)
-                data['season'] = year
-                all_data.append(data)
-                print(f"  ✓ {year}: {len(data)} players")
+
+                # データ処理
+                df_clean = data[['Name', 'G', 'AB', 'R', 'H', 'HR', 'RBI', 'SB', 'AVG']].copy()
+                df_clean.columns = ['name', 'games', 'at_bats', 'runs', 'hits', 'hr', 'rbi', 'sb', 'avg']
+                df_clean['season'] = year
+                df_clean['created_at'] = datetime.now()
+                df_clean = df_clean.dropna()
+
+                record_count = len(df_clean)
+                total_records += record_count
+
+                # Parquet形式でS3に保存（年度別パーティション）
+                s3_key = f"{s3_prefix}/year={year}/batting_stats.parquet"
+                parquet_buffer = df_clean.to_parquet(index=False, engine='pyarrow')
+
+                s3_client.put_object(
+                    Bucket=s3_bucket,
+                    Key=s3_key,
+                    Body=parquet_buffer
+                )
+
+                exported_files.append(s3_key)
+                print(f"  ✓ {year}: {record_count} players → s3://{s3_bucket}/{s3_key}")
+
             except Exception as e:
                 print(f"  ✗ {year}: FAILED - {str(e)}")
                 print(f"  → Skipping {year} and continuing...")
                 failed_years.append(year)
                 continue
-        
+
         # 失敗した年度をサマリー表示
         if failed_years:
             print(f"\n⚠️  Failed to fetch data for years: {failed_years}")
-        
+
         # 全年度失敗チェック
-        if not all_data:
-            raise ValueError("No data fetched from any year! All years failed.")
-        
-        df = pd.concat(all_data, ignore_index=True)
-        print(f"Total records: {len(df)}")
-        
-        # データ処理
-        print("[2] Processing data...")
-        df_clean = df[['Name', 'season', 'G', 'AB', 'R', 'H', 'HR', 'RBI', 'SB', 'AVG']].copy()
-        df_clean.columns = ['name', 'season', 'games', 'at_bats', 'runs', 'hits', 'hr', 'rbi', 'sb', 'avg']
-        df_clean = df_clean.dropna()
-        
-        # RDS接続
-        print("[3] Connecting to RDS...")
-        conn = psycopg2.connect(**db_config)
-        cur = conn.cursor()
-        
-        # テーブル作成
-        print("[4] Creating table if not exists...")
-        create_table_sql = """
-        CREATE TABLE IF NOT EXISTS baseball_batting_historical (
-            id SERIAL PRIMARY KEY,
-            name VARCHAR(100),
-            season INTEGER,
-            games INTEGER,
-            at_bats INTEGER,
-            runs INTEGER,
-            hits INTEGER,
-            hr INTEGER,
-            rbi INTEGER,
-            sb INTEGER,
-            avg DECIMAL(5,3),
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        );
-        """
-        cur.execute(create_table_sql)
-        conn.commit()
-        
-        # データ挿入
-        print("[5] Inserting data...")
-        insert_count = 0
-        for _, row in df_clean.iterrows():
-            insert_sql = """
-            INSERT INTO baseball_batting_historical 
-            (name, season, games, at_bats, runs, hits, hr, rbi, sb, avg)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            ON CONFLICT (name, season) 
-            DO UPDATE SET
-                games = EXCLUDED.games,
-                at_bats = EXCLUDED.at_bats,
-                runs = EXCLUDED.runs,
-                hits = EXCLUDED.hits,
-                hr = EXCLUDED.hr,
-                rbi = EXCLUDED.rbi,
-                sb = EXCLUDED.sb,
-                avg = EXCLUDED.avg
-            """
-            cur.execute(insert_sql, tuple(row))
-            insert_count += 1
-            
-            if insert_count % 100 == 0:
-                print(f"  Inserted {insert_count} records...")
-        
-        conn.commit()
-        print(f"✓ Total inserted: {insert_count} records")
-        
-        # クリーンアップ
-        cur.close()
-        conn.close()
-        
+        if total_records == 0:
+            raise ValueError("No data exported to S3! All years failed.")
+
+        print(f"\n[2] Export completed!")
+        print(f"    Total records: {total_records}")
+        print(f"    Files exported: {len(exported_files)}")
+
         # 結果サマリー
+        s3_path = f"s3://{s3_bucket}/{s3_prefix}/"
         result = {
             'statusCode': 200,
             'body': {
                 'message': 'Success',
-                'records_inserted': insert_count,
+                'total_records': total_records,
+                'files_exported': len(exported_files),
+                's3_location': s3_path,
                 'years': f"{start_year}-{end_year}",
-                'failed_years': failed_years
+                'failed_years': failed_years,
+                'athena_query': f"SELECT * FROM baseball_stats.batting_stats WHERE year = {end_year} LIMIT 10;"
             }
         }
-        
+
         print("=" * 60)
-        print("✓ Import completed successfully!")
+        print("✓ Export completed successfully!")
+        print(f"📊 Athena Query: SELECT * FROM baseball_stats.batting_stats")
         if failed_years:
             print(f"⚠️  Note: {len(failed_years)} year(s) failed: {failed_years}")
         print("=" * 60)
@@ -224,14 +187,15 @@ def lambda_handler(event, context):
         duration = round(time.time() - start_time, 2)
         send_slack_notification(
             success=True,
-            records=insert_count,
+            records=total_records,
             years=f"{start_year}-{end_year}",
             failed_years=failed_years,
-            duration=duration
+            duration=duration,
+            s3_path=s3_path
         )
 
         return result
-        
+
     except Exception as e:
         print(f"ERROR: {str(e)}")
         import traceback

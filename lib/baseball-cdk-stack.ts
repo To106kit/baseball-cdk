@@ -1,7 +1,6 @@
 import * as cdk from 'aws-cdk-lib';
 import { Construct } from 'constructs';
-import * as ec2 from 'aws-cdk-lib/aws-ec2';
-import * as rds from 'aws-cdk-lib/aws-rds';
+import * as s3 from 'aws-cdk-lib/aws-s3';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
 import * as ecr from 'aws-cdk-lib/aws-ecr';
 import * as events from 'aws-cdk-lib/aws-events';
@@ -10,6 +9,8 @@ import * as sns from 'aws-cdk-lib/aws-sns';
 import * as subscriptions from 'aws-cdk-lib/aws-sns-subscriptions';
 import * as cloudwatch from 'aws-cdk-lib/aws-cloudwatch';
 import * as cloudwatch_actions from 'aws-cdk-lib/aws-cloudwatch-actions';
+import * as glue from 'aws-cdk-lib/aws-glue';
+import * as iam from 'aws-cdk-lib/aws-iam';
 import * as dotenv from 'dotenv';
 import * as path from 'path';
 
@@ -17,8 +18,6 @@ import * as path from 'path';
 dotenv.config();
 
 export class BaseballCdkStack extends cdk.Stack {
-  public readonly database: rds.DatabaseInstance;
-
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
     super(scope, id, props);
 
@@ -28,46 +27,73 @@ export class BaseballCdkStack extends cdk.Stack {
       throw new Error('SLACK_WEBHOOK_URL is not set in .env file');
     }
 
-    // デフォルトVPCを使用
-    const vpc = ec2.Vpc.fromLookup(this, 'DefaultVPC', {
-      isDefault: true,
+    // S3バケット作成（Data Lake）
+    const dataBucket = new s3.Bucket(this, 'BaseballDataBucket', {
+      bucketName: `baseball-stats-data-${this.account}`,
+      encryption: s3.BucketEncryption.S3_MANAGED,
+      blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
+      removalPolicy: cdk.RemovalPolicy.RETAIN, // データ保護のため削除しない
+      lifecycleRules: [
+        {
+          id: 'TransitionToIA',
+          transitions: [
+            {
+              storageClass: s3.StorageClass.INTELLIGENT_TIERING,
+              transitionAfter: cdk.Duration.days(90),
+            },
+          ],
+        },
+      ],
     });
 
-    // RDSセキュリティグループ
-    const rdsSecurityGroup = new ec2.SecurityGroup(this, 'RDSSecurityGroup', {
-      vpc,
-      description: 'Security group for Baseball RDS',
-      allowAllOutbound: true,
-    });
-
-    // インターネットからRDSへのアクセスを許可（Lambda用）
-    rdsSecurityGroup.addIngressRule(
-      ec2.Peer.anyIpv4(),
-      ec2.Port.tcp(5432),
-      'Allow from anywhere (for Lambda outside VPC)'
-    );
-
-    // RDS PostgreSQL
-    const database = new rds.DatabaseInstance(this, 'BaseballDatabase', {
-      engine: rds.DatabaseInstanceEngine.postgres({
-        version: rds.PostgresEngineVersion.VER_15,
-      }),
-      instanceType: ec2.InstanceType.of(
-        ec2.InstanceClass.T3,
-        ec2.InstanceSize.MICRO,
-      ),
-      vpc,
-      vpcSubnets: {
-        subnetType: ec2.SubnetType.PUBLIC,
+    // Glue Database（Athenaスキーマ用）
+    const glueDatabase = new glue.CfnDatabase(this, 'BaseballDatabase', {
+      catalogId: this.account,
+      databaseInput: {
+        name: 'baseball_stats',
+        description: 'Baseball statistics data lake',
       },
-      securityGroups: [rdsSecurityGroup],
-      allocatedStorage: 20,
-      databaseName: 'postgres',
-      publiclyAccessible: true,
-      removalPolicy: cdk.RemovalPolicy.DESTROY,
     });
 
-    this.database = database;
+    // Glue Table（Athenaクエリ用）
+    const glueTable = new glue.CfnTable(this, 'BattingStatsTable', {
+      catalogId: this.account,
+      databaseName: glueDatabase.ref,
+      tableInput: {
+        name: 'batting_stats',
+        description: 'MLB batting statistics by year',
+        tableType: 'EXTERNAL_TABLE',
+        partitionKeys: [
+          {
+            name: 'year',
+            type: 'int',
+            comment: 'Season year',
+          },
+        ],
+        storageDescriptor: {
+          columns: [
+            { name: 'name', type: 'string', comment: 'Player name' },
+            { name: 'season', type: 'int', comment: 'Season year' },
+            { name: 'games', type: 'int', comment: 'Games played' },
+            { name: 'at_bats', type: 'int', comment: 'At bats' },
+            { name: 'runs', type: 'int', comment: 'Runs scored' },
+            { name: 'hits', type: 'int', comment: 'Hits' },
+            { name: 'hr', type: 'int', comment: 'Home runs' },
+            { name: 'rbi', type: 'int', comment: 'Runs batted in' },
+            { name: 'sb', type: 'int', comment: 'Stolen bases' },
+            { name: 'avg', type: 'double', comment: 'Batting average' },
+            { name: 'created_at', type: 'timestamp', comment: 'Record creation timestamp' },
+          ],
+          location: `s3://${dataBucket.bucketName}/batting_stats/`,
+          inputFormat: 'org.apache.hadoop.hive.ql.io.parquet.MapredParquetInputFormat',
+          outputFormat: 'org.apache.hadoop.hive.ql.io.parquet.MapredParquetOutputFormat',
+          serdeInfo: {
+            serializationLibrary: 'org.apache.hadoop.hive.ql.io.parquet.serde.ParquetHiveSerDe',
+          },
+        },
+      },
+    });
+    glueTable.addDependency(glueDatabase);
 
     // Lambda関数作成（Container Image版） - VPC外で実行
     const dataFetchFunction = new lambda.DockerImageFunction(this, 'DataFetchFunctionV3', {
@@ -78,17 +104,17 @@ export class BaseballCdkStack extends cdk.Stack {
       timeout: cdk.Duration.minutes(15),
       memorySize: 3008,
       environment: {
-        DB_HOST: database.dbInstanceEndpointAddress,
-        DB_PORT: database.dbInstanceEndpointPort,
-        DB_NAME: 'postgres',
-        DB_USER: 'postgres',
-        DB_PASSWORD: database.secret?.secretValueFromJson('password').unsafeUnwrap() || '',
+        S3_BUCKET: dataBucket.bucketName,
+        S3_PREFIX: 'batting_stats',
         START_YEAR: '2015',
         END_YEAR: '2025',
         PYBASEBALL_CACHE: '/tmp/.pybaseball',
         SLACK_WEBHOOK_URL: slackWebhookUrl,
       },
     });
+
+    // Lambdaに S3 書き込み権限付与
+    dataBucket.grantWrite(dataFetchFunction);
 
     // ==========================================
     // SNS Topic (アラーム通知用)
@@ -182,6 +208,21 @@ export class BaseballCdkStack extends cdk.Stack {
     // ==========================================
     // Outputs
     // ==========================================
+    new cdk.CfnOutput(this, 'DataBucketName', {
+      value: dataBucket.bucketName,
+      description: 'S3 Data Lake Bucket Name',
+    });
+
+    new cdk.CfnOutput(this, 'GlueDatabaseName', {
+      value: glueDatabase.ref,
+      description: 'Glue Database Name for Athena',
+    });
+
+    new cdk.CfnOutput(this, 'AthenaQueryExample', {
+      value: `SELECT * FROM ${glueDatabase.ref}.batting_stats WHERE year = 2024 LIMIT 10;`,
+      description: 'Example Athena SQL Query',
+    });
+
     new cdk.CfnOutput(this, 'LambdaFunctionName', {
       value: dataFetchFunction.functionName,
       description: 'Lambda Function Name',
