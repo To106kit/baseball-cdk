@@ -53,27 +53,27 @@ jobs:
       - name: Create Pull Request
         if: steps.check-pr.outputs.exists == 'false'
         run: |
+          BRANCH_NAME="${{ steps.commit-info.outputs.branch }}"
+          COMMIT_SHA="${{ github.sha }}"
+
           gh pr create \
             --title "${{ steps.commit-info.outputs.title }}" \
-            --body "$(cat <<'EOF'
-## Summary
-自動生成されたプルリクエスト
+            --body "## Summary
+          自動生成されたプルリクエスト
 
-**Branch:** ${{ steps.commit-info.outputs.branch }}
-**Latest commit:** ${{ github.sha }}
+          **Branch:** ${BRANCH_NAME}
+          **Latest commit:** ${COMMIT_SHA}
 
-## Changes
-このPRは `${{ steps.commit-info.outputs.branch }}` ブランチから自動作成されました。
+          ## Changes
+          このPRは \`${BRANCH_NAME}\` ブランチから自動作成されました。
 
-## Checklist
-- [ ] コード変更を確認
-- [ ] テストが通ることを確認
-- [ ] ドキュメントを更新（必要に応じて）
+          ## Checklist
+          - [ ] コード変更を確認
+          - [ ] テストが通ることを確認
+          - [ ] ドキュメントを更新（必要に応じて）
 
----
-🤖 This PR was automatically created by GitHub Actions
-EOF
-)" \
+          ---
+          🤖 This PR was automatically created by GitHub Actions" \
             --base main \
             --head "${{ steps.commit-info.outputs.branch }}"
         env:
