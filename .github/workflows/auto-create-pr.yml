@@ -1,0 +1,88 @@
+name: Auto Create Pull Request
+
+on:
+  push:
+    branches-ignore:
+      - main
+
+permissions:
+  pull-requests: write
+  contents: read
+
+jobs:
+  create-pr:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Check if PR already exists
+        id: check-pr
+        run: |
+          # 現在のブランチ名を取得
+          BRANCH_NAME="${GITHUB_REF#refs/heads/}"
+
+          # 既存のPRをチェック
+          PR_EXISTS=$(gh pr list --head "$BRANCH_NAME" --json number --jq 'length')
+
+          if [ "$PR_EXISTS" -gt 0 ]; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+            echo "PR already exists for branch $BRANCH_NAME"
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+            echo "No PR found for branch $BRANCH_NAME"
+          fi
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Get commit info
+        id: commit-info
+        if: steps.check-pr.outputs.exists == 'false'
+        run: |
+          # 最新のコミットメッセージを取得
+          COMMIT_MSG=$(git log -1 --pretty=%B)
+          COMMIT_TITLE=$(echo "$COMMIT_MSG" | head -n1)
+
+          # ブランチ名からPRタイトルを推測
+          BRANCH_NAME="${GITHUB_REF#refs/heads/}"
+
+          # PRタイトル: コミットメッセージの1行目を使用
+          echo "title=$COMMIT_TITLE" >> $GITHUB_OUTPUT
+          echo "branch=$BRANCH_NAME" >> $GITHUB_OUTPUT
+
+      - name: Create Pull Request
+        if: steps.check-pr.outputs.exists == 'false'
+        run: |
+          BRANCH_NAME="${{ steps.commit-info.outputs.branch }}"
+          COMMIT_SHA="${{ github.sha }}"
+
+          gh pr create \
+            --title "${{ steps.commit-info.outputs.title }}" \
+            --body "## Summary
+          自動生成されたプルリクエスト
+
+          **Branch:** ${BRANCH_NAME}
+          **Latest commit:** ${COMMIT_SHA}
+
+          ## Changes
+          このPRは \`${BRANCH_NAME}\` ブランチから自動作成されました。
+
+          ## Checklist
+          - [ ] コード変更を確認
+          - [ ] テストが通ることを確認
+          - [ ] ドキュメントを更新（必要に応じて）
+
+          ---
+          🤖 This PR was automatically created by GitHub Actions" \
+            --base main \
+            --head "${{ steps.commit-info.outputs.branch }}"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Summary
+        if: steps.check-pr.outputs.exists == 'false'
+        run: |
+          echo "✅ Pull Request created successfully!" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Title:** ${{ steps.commit-info.outputs.title }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Branch:** ${{ steps.commit-info.outputs.branch }} → main" >> $GITHUB_STEP_SUMMARY
