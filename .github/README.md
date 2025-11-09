@@ -18,8 +18,8 @@
 3. ECRにプッシュ（バージョンタグ + `latest`タグ）
 
 **出力:**
-- ECRイメージ: `984927793312.dkr.ecr.ap-northeast-1.amazonaws.com/baseball-lambda:vX`
-- ECRイメージ: `984927793312.dkr.ecr.ap-northeast-1.amazonaws.com/baseball-lambda:latest`
+- ECRイメージ: `<ACCOUNT_ID>.dkr.ecr.ap-northeast-1.amazonaws.com/baseball-lambda:vX`
+- ECRイメージ: `<ACCOUNT_ID>.dkr.ecr.ap-northeast-1.amazonaws.com/baseball-lambda:latest`
 
 ## セットアップ手順
 
