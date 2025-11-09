@@ -24,3 +24,9 @@ __pycache__/
 .dockerignore
 .env
 .claude/
+
+# Sensitive files
+phase1-config.json
+ec2/baseball_historical_import.py
+metabase-policy.json
+cdk.context.json
