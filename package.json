@@ -8,7 +8,9 @@
     "build": "tsc",
     "watch": "tsc -w",
     "test": "jest",
-    "cdk": "cdk"
+    "cdk": "cdk",
+    "diagram": "python generate_architecture_diagram.py",
+    "deploy": "npm run diagram && npx cdk deploy"
   },
   "devDependencies": {
     "@types/dotenv": "^6.1.1",

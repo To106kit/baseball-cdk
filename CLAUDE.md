@@ -13,6 +13,9 @@
 
 ## アーキテクチャ
 
+![Architecture Diagram](baseball-cdk-architecture.png)
+
+**アーキテクチャフロー:**
 ```
 EventBridge (週次スケジュール)
     ↓
@@ -436,6 +439,30 @@ MSCK REPAIR TABLE baseball_stats.batting_stats;
    ```
 
 詳細は [.github/README.md](.github/README.md) を参照。
+
+### アーキテクチャ図の自動生成ワークフロー
+
+**トリガー条件:**
+- `lib/baseball-cdk-stack.ts`の変更をpush
+- `generate_architecture_diagram.py`の変更をpush
+- 手動実行（Actions タブから）
+
+**処理内容:**
+1. Pythonとdiagramsライブラリをセットアップ
+2. GraphVizをインストール
+3. アーキテクチャ図を自動生成（[baseball-cdk-architecture.png](baseball-cdk-architecture.png)）
+4. 変更があれば自動コミット・プッシュ
+
+**設定ファイル:** [.github/workflows/generate-diagram.yml](.github/workflows/generate-diagram.yml)
+
+**ローカルでの実行:**
+```bash
+# 図のみ生成
+npm run diagram
+
+# 図を生成してからデプロイ
+npm run deploy
+```
 
 ## 今後の改善案
 
