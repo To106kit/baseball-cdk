@@ -171,4 +171,10 @@ aws lambda invoke \
 - [SECURITY.md](SECURITY.md) - セキュリティポリシー
 - [.github/README.md](.github/README.md) - GitHub Actions CI/CD
 
+## AI支援開発
+
+このプロジェクトは以下のAIツールで開発されています：
+- **Claude Code** - インフラストラクチャ設計・実装
+- **CodeRabbit** - 自動コードレビュー
+
 
