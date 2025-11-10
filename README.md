@@ -185,4 +185,5 @@ aws lambda invoke \
 
 - [pybaseball Documentation](https://github.com/jldbc/pybaseball)
 - [AWS CDK Documentation](https://docs.aws.amazon.com/cdk/)
+- [CodeRabbit Documentation](https://docs.coderabbit.ai/)
 
