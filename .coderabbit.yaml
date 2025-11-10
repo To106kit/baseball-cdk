@@ -1,0 +1,25 @@
+# CodeRabbit Configuration
+# https://docs.coderabbit.ai/guides/review-instructions
+
+reviews:
+  # 自動レビューを有効化
+  auto_review:
+    enabled: true
+
+  # レビュー時にポエムを含めない（オプション）
+  poem: false
+
+  # 高レベルのサマリーを含める
+  high_level_summary: true
+
+  # レビューステータスを有効化
+  review_status: true
+
+  # 変更リクエストワークフローを有効化
+  request_changes_workflow: false
+
+chat:
+  # チャット機能での自動返信
+  auto_reply: true
+
+language: ja  # 日本語でのレビューを優先
