@@ -51,12 +51,13 @@ jobs:
           echo "branch=$BRANCH_NAME" >> $GITHUB_OUTPUT
 
       - name: Create Pull Request
+        id: create-pr
         if: steps.check-pr.outputs.exists == 'false'
         run: |
           BRANCH_NAME="${{ steps.commit-info.outputs.branch }}"
           COMMIT_SHA="${{ github.sha }}"
 
-          gh pr create \
+          PR_URL=$(gh pr create \
             --title "${{ steps.commit-info.outputs.title }}" \
             --body "## Summary
           自動生成されたプルリクエスト
@@ -75,7 +76,20 @@ jobs:
           ---
           🤖 This PR was automatically created by GitHub Actions" \
             --base main \
-            --head "${{ steps.commit-info.outputs.branch }}"
+            --head "${{ steps.commit-info.outputs.branch }}")
+
+          # PR番号を抽出
+          PR_NUMBER=$(echo "$PR_URL" | grep -oP '\d+$')
+          echo "pr_number=$PR_NUMBER" >> $GITHUB_OUTPUT
+          echo "PR created: $PR_URL (PR #$PR_NUMBER)"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Request CodeRabbit review
+        if: steps.check-pr.outputs.exists == 'false' && steps.create-pr.outputs.pr_number != ''
+        run: |
+          gh pr comment ${{ steps.create-pr.outputs.pr_number }} --body "@coderabbitai review"
+          echo "✅ CodeRabbit review requested"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
