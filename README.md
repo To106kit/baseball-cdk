@@ -181,3 +181,8 @@ aws lambda invoke \
 
 **Note**: このプロジェクトは個人学習用です。
 
+## 参考リンク
+
+- [pybaseball Documentation](https://github.com/jldbc/pybaseball)
+- [AWS CDK Documentation](https://docs.aws.amazon.com/cdk/)
+
