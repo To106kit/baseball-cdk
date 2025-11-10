@@ -95,6 +95,45 @@ export class BaseballCdkStack extends cdk.Stack {
     });
     glueTable.addDependency(glueDatabase);
 
+    // Glue Table（投手成績用）
+    const gluePitchingTable = new glue.CfnTable(this, 'PitchingStatsTable', {
+      catalogId: this.account,
+      databaseName: glueDatabase.ref,
+      tableInput: {
+        name: 'pitching_stats',
+        description: 'MLB pitching statistics by year',
+        tableType: 'EXTERNAL_TABLE',
+        partitionKeys: [
+          {
+            name: 'year',
+            type: 'int',
+            comment: 'Season year',
+          },
+        ],
+        storageDescriptor: {
+          columns: [
+            { name: 'name', type: 'string', comment: 'Pitcher name' },
+            { name: 'season', type: 'int', comment: 'Season year' },
+            { name: 'games', type: 'int', comment: 'Games pitched' },
+            { name: 'wins', type: 'int', comment: 'Wins' },
+            { name: 'losses', type: 'int', comment: 'Losses' },
+            { name: 'era', type: 'double', comment: 'Earned run average' },
+            { name: 'strikeouts', type: 'int', comment: 'Strikeouts' },
+            { name: 'innings_pitched', type: 'double', comment: 'Innings pitched' },
+            { name: 'whip', type: 'double', comment: 'WHIP (walks + hits per inning)' },
+            { name: 'created_at', type: 'timestamp', comment: 'Record creation timestamp' },
+          ],
+          location: `s3://${dataBucket.bucketName}/pitching_stats/`,
+          inputFormat: 'org.apache.hadoop.hive.ql.io.parquet.MapredParquetInputFormat',
+          outputFormat: 'org.apache.hadoop.hive.ql.io.parquet.MapredParquetOutputFormat',
+          serdeInfo: {
+            serializationLibrary: 'org.apache.hadoop.hive.ql.io.parquet.serde.ParquetHiveSerDe',
+          },
+        },
+      },
+    });
+    gluePitchingTable.addDependency(glueDatabase);
+
     // Lambda関数作成（Container Image版） - VPC外で実行
     const dataFetchFunction = new lambda.DockerImageFunction(this, 'DataFetchFunctionV3', {
       code: lambda.DockerImageCode.fromEcr(
@@ -105,7 +144,6 @@ export class BaseballCdkStack extends cdk.Stack {
       memorySize: 3008,
       environment: {
         S3_BUCKET: dataBucket.bucketName,
-        S3_PREFIX: 'batting_stats',
         START_YEAR: '2015',
         END_YEAR: '2025',
         PYBASEBALL_CACHE: '/tmp/.pybaseball',

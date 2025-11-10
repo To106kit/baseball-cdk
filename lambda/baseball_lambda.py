@@ -5,7 +5,7 @@ os.environ['PYBASEBALL_CACHE'] = '/tmp/.pybaseball'
 
 import boto3
 import pandas as pd
-from pybaseball import batting_stats
+from pybaseball import batting_stats, pitching_stats
 from datetime import datetime
 import json
 import urllib3
@@ -81,6 +81,99 @@ def send_slack_notification(success=True, records=0, years="", failed_years=None
     except Exception as e:
         print(f"⚠️  Failed to send Slack notification: {str(e)}")
 
+def fetch_batting_data(s3_bucket, s3_prefix, start_year, end_year, skip_years):
+    """
+    打撃成績データを取得してS3に保存
+    """
+    print(f"\n[Batting Stats] Fetching data from {start_year} to {end_year}...")
+    total_records = 0
+    failed_years = []
+    exported_files = []
+
+    for year in range(start_year, end_year + 1):
+        if year in skip_years:
+            print(f"  ⊘ {year}: SKIPPED (pybaseball limitation)")
+            failed_years.append(year)
+            continue
+
+        try:
+            print(f"  Fetching {year} batting data...")
+            data = batting_stats(year, qual=100)
+
+            df_clean = data[['Name', 'G', 'AB', 'R', 'H', 'HR', 'RBI', 'SB', 'AVG']].copy()
+            df_clean.columns = ['name', 'games', 'at_bats', 'runs', 'hits', 'hr', 'rbi', 'sb', 'avg']
+            df_clean['season'] = year
+            df_clean['created_at'] = datetime.now()
+            df_clean = df_clean.dropna()
+
+            record_count = len(df_clean)
+            total_records += record_count
+
+            s3_key = f"{s3_prefix}/year={year}/batting_stats.parquet"
+            parquet_buffer = df_clean.to_parquet(index=False, engine='pyarrow')
+
+            s3_client.put_object(
+                Bucket=s3_bucket,
+                Key=s3_key,
+                Body=parquet_buffer
+            )
+
+            exported_files.append(s3_key)
+            print(f"  ✓ {year}: {record_count} players → s3://{s3_bucket}/{s3_key}")
+
+        except Exception as e:
+            print(f"  ✗ {year}: FAILED - {str(e)}")
+            failed_years.append(year)
+
+    return total_records, failed_years, exported_files
+
+def fetch_pitching_data(s3_bucket, s3_prefix, start_year, end_year, skip_years):
+    """
+    投手成績データを取得してS3に保存
+    """
+    print(f"\n[Pitching Stats] Fetching data from {start_year} to {end_year}...")
+    total_records = 0
+    failed_years = []
+    exported_files = []
+
+    for year in range(start_year, end_year + 1):
+        if year in skip_years:
+            print(f"  ⊘ {year}: SKIPPED (pybaseball limitation)")
+            failed_years.append(year)
+            continue
+
+        try:
+            print(f"  Fetching {year} pitching data...")
+            data = pitching_stats(year, qual=50)  # 50イニング以上
+
+            # 投手成績の主要カラムを抽出
+            df_clean = data[['Name', 'G', 'W', 'L', 'ERA', 'SO', 'IP', 'WHIP']].copy()
+            df_clean.columns = ['name', 'games', 'wins', 'losses', 'era', 'strikeouts', 'innings_pitched', 'whip']
+            df_clean['season'] = year
+            df_clean['created_at'] = datetime.now()
+            df_clean = df_clean.dropna()
+
+            record_count = len(df_clean)
+            total_records += record_count
+
+            s3_key = f"{s3_prefix}/year={year}/pitching_stats.parquet"
+            parquet_buffer = df_clean.to_parquet(index=False, engine='pyarrow')
+
+            s3_client.put_object(
+                Bucket=s3_bucket,
+                Key=s3_key,
+                Body=parquet_buffer
+            )
+
+            exported_files.append(s3_key)
+            print(f"  ✓ {year}: {record_count} pitchers → s3://{s3_bucket}/{s3_key}")
+
+        except Exception as e:
+            print(f"  ✗ {year}: FAILED - {str(e)}")
+            failed_years.append(year)
+
+    return total_records, failed_years, exported_files
+
 def lambda_handler(event, context):
     """
     Lambda関数のエントリーポイント - S3 Data Lake版
@@ -94,7 +187,6 @@ def lambda_handler(event, context):
 
     # 環境変数取得
     s3_bucket = os.environ['S3_BUCKET']
-    s3_prefix = os.environ.get('S3_PREFIX', 'batting_stats')
 
     # 取得する年度範囲
     start_year = int(os.environ.get('START_YEAR', 2015))
@@ -102,85 +194,60 @@ def lambda_handler(event, context):
     skip_years = [2022]  # pybaseballで取得できない年度
 
     try:
-        print(f"[1] Fetching data from {start_year} to {end_year}...")
-        print(f"    S3 Destination: s3://{s3_bucket}/{s3_prefix}/")
+        print(f"Fetching data from {start_year} to {end_year}...")
+        print(f"S3 Destination: s3://{s3_bucket}/")
 
-        total_records = 0
-        failed_years = []
-        exported_files = []
+        # 打撃成績データ取得
+        batting_records, batting_failed, batting_files = fetch_batting_data(
+            s3_bucket, 'batting_stats', start_year, end_year, skip_years
+        )
 
-        for year in range(start_year, end_year + 1):
-            # スキップ対象の年度チェック
-            if year in skip_years:
-                print(f"  ⊘ {year}: SKIPPED (pybaseball limitation)")
-                failed_years.append(year)
-                continue
+        # 投手成績データ取得
+        pitching_records, pitching_failed, pitching_files = fetch_pitching_data(
+            s3_bucket, 'pitching_stats', start_year, end_year, skip_years
+        )
 
-            try:
-                print(f"  Fetching {year} season data...")
-                data = batting_stats(year, qual=100)
-
-                # データ処理
-                df_clean = data[['Name', 'G', 'AB', 'R', 'H', 'HR', 'RBI', 'SB', 'AVG']].copy()
-                df_clean.columns = ['name', 'games', 'at_bats', 'runs', 'hits', 'hr', 'rbi', 'sb', 'avg']
-                df_clean['season'] = year
-                df_clean['created_at'] = datetime.now()
-                df_clean = df_clean.dropna()
-
-                record_count = len(df_clean)
-                total_records += record_count
-
-                # Parquet形式でS3に保存（年度別パーティション）
-                s3_key = f"{s3_prefix}/year={year}/batting_stats.parquet"
-                parquet_buffer = df_clean.to_parquet(index=False, engine='pyarrow')
-
-                s3_client.put_object(
-                    Bucket=s3_bucket,
-                    Key=s3_key,
-                    Body=parquet_buffer
-                )
-
-                exported_files.append(s3_key)
-                print(f"  ✓ {year}: {record_count} players → s3://{s3_bucket}/{s3_key}")
-
-            except Exception as e:
-                print(f"  ✗ {year}: FAILED - {str(e)}")
-                print(f"  → Skipping {year} and continuing...")
-                failed_years.append(year)
-                continue
-
-        # 失敗した年度をサマリー表示
-        if failed_years:
-            print(f"\n⚠️  Failed to fetch data for years: {failed_years}")
+        total_records = batting_records + pitching_records
+        total_files = len(batting_files) + len(pitching_files)
+        all_failed = list(set(batting_failed + pitching_failed))
 
         # 全年度失敗チェック
         if total_records == 0:
             raise ValueError("No data exported to S3! All years failed.")
 
-        print(f"\n[2] Export completed!")
+        print(f"\n[Summary] Export completed!")
+        print(f"    Batting records: {batting_records}")
+        print(f"    Pitching records: {pitching_records}")
         print(f"    Total records: {total_records}")
-        print(f"    Files exported: {len(exported_files)}")
+        print(f"    Files exported: {total_files}")
 
         # 結果サマリー
-        s3_path = f"s3://{s3_bucket}/{s3_prefix}/"
+        s3_path = f"s3://{s3_bucket}/"
         result = {
             'statusCode': 200,
             'body': {
                 'message': 'Success',
+                'batting_records': batting_records,
+                'pitching_records': pitching_records,
                 'total_records': total_records,
-                'files_exported': len(exported_files),
+                'files_exported': total_files,
                 's3_location': s3_path,
                 'years': f"{start_year}-{end_year}",
-                'failed_years': failed_years,
-                'athena_query': f"SELECT * FROM baseball_stats.batting_stats WHERE year = {end_year} LIMIT 10;"
+                'failed_years': all_failed,
+                'athena_queries': {
+                    'batting': f"SELECT * FROM baseball_stats.batting_stats WHERE year = {end_year} LIMIT 10;",
+                    'pitching': f"SELECT * FROM baseball_stats.pitching_stats WHERE year = {end_year} LIMIT 10;"
+                }
             }
         }
 
         print("=" * 60)
         print("✓ Export completed successfully!")
-        print(f"📊 Athena Query: SELECT * FROM baseball_stats.batting_stats")
-        if failed_years:
-            print(f"⚠️  Note: {len(failed_years)} year(s) failed: {failed_years}")
+        print(f"📊 Athena Queries:")
+        print(f"   Batting: SELECT * FROM baseball_stats.batting_stats")
+        print(f"   Pitching: SELECT * FROM baseball_stats.pitching_stats")
+        if all_failed:
+            print(f"⚠️  Note: {len(all_failed)} year(s) failed: {all_failed}")
         print("=" * 60)
 
         # Slack通知送信
@@ -189,7 +256,7 @@ def lambda_handler(event, context):
             success=True,
             records=total_records,
             years=f"{start_year}-{end_year}",
-            failed_years=failed_years,
+            failed_years=all_failed,
             duration=duration,
             s3_path=s3_path
         )
