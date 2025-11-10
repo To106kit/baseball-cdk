@@ -3,10 +3,8 @@
 
 reviews:
   # 自動レビューを有効化
-  auto_review: true
-
-  # GitHub Actionsなどのbotもレビュー対象にする
-  ignore_bots: false
+  auto_review:
+    enabled: true
 
   # レビュー時にポエムを含めない（オプション）
   poem: false
