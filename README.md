@@ -177,4 +177,7 @@ aws lambda invoke \
 - **Claude Code** - インフラストラクチャ設計・実装
 - **CodeRabbit** - 自動コードレビュー
 
+---
+
+**Note**: このプロジェクトは個人学習用です。
 
