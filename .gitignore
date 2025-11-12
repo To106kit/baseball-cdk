@@ -19,6 +19,10 @@ cdk.out/
 __pycache__/
 *.pyc
 *.pyo
+.pybaseball_cache/
+
+# Test files (investigation/research)
+test_*.py
 
 # Docker
 .dockerignore
