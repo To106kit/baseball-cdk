@@ -134,11 +134,138 @@ export class BaseballCdkStack extends cdk.Stack {
     });
     gluePitchingTable.addDependency(glueDatabase);
 
+    // Glue Table（チーム打撃成績用）
+    const glueTeamBattingTable = new glue.CfnTable(this, 'TeamBattingStatsTable', {
+      catalogId: this.account,
+      databaseName: glueDatabase.ref,
+      tableInput: {
+        name: 'team_batting_stats',
+        description: 'MLB team batting statistics by year',
+        tableType: 'EXTERNAL_TABLE',
+        partitionKeys: [
+          {
+            name: 'year',
+            type: 'int',
+            comment: 'Season year',
+          },
+        ],
+        storageDescriptor: {
+          columns: [
+            { name: 'teamIDfg', type: 'int', comment: 'Team ID' },
+            { name: 'Season', type: 'int', comment: 'Season year' },
+            { name: 'Team', type: 'string', comment: 'Team abbreviation' },
+            { name: 'G', type: 'int', comment: 'Games played' },
+            { name: 'AB', type: 'int', comment: 'At bats' },
+            { name: 'H', type: 'int', comment: 'Hits' },
+            { name: 'HR', type: 'int', comment: 'Home runs' },
+            { name: 'RBI', type: 'int', comment: 'Runs batted in' },
+            { name: 'AVG', type: 'double', comment: 'Batting average' },
+            { name: 'OBP', type: 'double', comment: 'On-base percentage' },
+            { name: 'SLG', type: 'double', comment: 'Slugging percentage' },
+            { name: 'wRC+', type: 'int', comment: 'Weighted runs created plus' },
+            { name: 'WAR', type: 'double', comment: 'Wins above replacement' },
+            { name: 'created_at', type: 'timestamp', comment: 'Record creation timestamp' },
+          ],
+          location: `s3://${dataBucket.bucketName}/team_batting_stats/`,
+          inputFormat: 'org.apache.hadoop.hive.ql.io.parquet.MapredParquetInputFormat',
+          outputFormat: 'org.apache.hadoop.hive.ql.io.parquet.MapredParquetOutputFormat',
+          serdeInfo: {
+            serializationLibrary: 'org.apache.hadoop.hive.ql.io.parquet.serde.ParquetHiveSerDe',
+          },
+        },
+      },
+    });
+    glueTeamBattingTable.addDependency(glueDatabase);
+
+    // Glue Table（チーム投手成績用）
+    const glueTeamPitchingTable = new glue.CfnTable(this, 'TeamPitchingStatsTable', {
+      catalogId: this.account,
+      databaseName: glueDatabase.ref,
+      tableInput: {
+        name: 'team_pitching_stats',
+        description: 'MLB team pitching statistics by year',
+        tableType: 'EXTERNAL_TABLE',
+        partitionKeys: [
+          {
+            name: 'year',
+            type: 'int',
+            comment: 'Season year',
+          },
+        ],
+        storageDescriptor: {
+          columns: [
+            { name: 'teamIDfg', type: 'int', comment: 'Team ID' },
+            { name: 'Season', type: 'int', comment: 'Season year' },
+            { name: 'Team', type: 'string', comment: 'Team abbreviation' },
+            { name: 'W', type: 'int', comment: 'Wins' },
+            { name: 'L', type: 'int', comment: 'Losses' },
+            { name: 'ERA', type: 'double', comment: 'Earned run average' },
+            { name: 'IP', type: 'double', comment: 'Innings pitched' },
+            { name: 'SO', type: 'int', comment: 'Strikeouts' },
+            { name: 'BB', type: 'int', comment: 'Walks' },
+            { name: 'WHIP', type: 'double', comment: 'WHIP' },
+            { name: 'FIP', type: 'double', comment: 'Fielding independent pitching' },
+            { name: 'WAR', type: 'double', comment: 'Wins above replacement' },
+            { name: 'created_at', type: 'timestamp', comment: 'Record creation timestamp' },
+          ],
+          location: `s3://${dataBucket.bucketName}/team_pitching_stats/`,
+          inputFormat: 'org.apache.hadoop.hive.ql.io.parquet.MapredParquetInputFormat',
+          outputFormat: 'org.apache.hadoop.hive.ql.io.parquet.MapredParquetOutputFormat',
+          serdeInfo: {
+            serializationLibrary: 'org.apache.hadoop.hive.ql.io.parquet.serde.ParquetHiveSerDe',
+          },
+        },
+      },
+    });
+    glueTeamPitchingTable.addDependency(glueDatabase);
+
+    // Glue Table（チーム守備成績用）
+    const glueTeamFieldingTable = new glue.CfnTable(this, 'TeamFieldingStatsTable', {
+      catalogId: this.account,
+      databaseName: glueDatabase.ref,
+      tableInput: {
+        name: 'team_fielding_stats',
+        description: 'MLB team fielding statistics by year',
+        tableType: 'EXTERNAL_TABLE',
+        partitionKeys: [
+          {
+            name: 'year',
+            type: 'int',
+            comment: 'Season year',
+          },
+        ],
+        storageDescriptor: {
+          columns: [
+            { name: 'teamIDfg', type: 'int', comment: 'Team ID' },
+            { name: 'Season', type: 'int', comment: 'Season year' },
+            { name: 'Team', type: 'string', comment: 'Team name' },
+            { name: 'G', type: 'int', comment: 'Games' },
+            { name: 'Inn', type: 'double', comment: 'Innings' },
+            { name: 'PO', type: 'int', comment: 'Putouts' },
+            { name: 'A', type: 'int', comment: 'Assists' },
+            { name: 'E', type: 'int', comment: 'Errors' },
+            { name: 'DP', type: 'int', comment: 'Double plays' },
+            { name: 'DRS', type: 'int', comment: 'Defensive runs saved' },
+            { name: 'UZR', type: 'double', comment: 'Ultimate zone rating' },
+            { name: 'Def', type: 'double', comment: 'Defensive value' },
+            { name: 'created_at', type: 'timestamp', comment: 'Record creation timestamp' },
+          ],
+          location: `s3://${dataBucket.bucketName}/team_fielding_stats/`,
+          inputFormat: 'org.apache.hadoop.hive.ql.io.parquet.MapredParquetInputFormat',
+          outputFormat: 'org.apache.hadoop.hive.ql.io.parquet.MapredParquetOutputFormat',
+          serdeInfo: {
+            serializationLibrary: 'org.apache.hadoop.hive.ql.io.parquet.serde.ParquetHiveSerDe',
+          },
+        },
+      },
+    });
+    glueTeamFieldingTable.addDependency(glueDatabase);
+
     // Lambda関数作成（Container Image版） - VPC外で実行
     const dataFetchFunction = new lambda.DockerImageFunction(this, 'DataFetchFunctionV3', {
       code: lambda.DockerImageCode.fromEcr(
         ecr.Repository.fromRepositoryName(this, 'BaseballLambdaRepo', 'baseball-lambda'),
-        { tagOrDigest: 'v30' }
+        { tagOrDigest: 'v31' }
       ),
       timeout: cdk.Duration.minutes(15),
       memorySize: 3008,
